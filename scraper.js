@@ -1,6 +1,27 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 
+/* ---------- AUTO SCROLL (FOR LAZY LOAD) ---------- */
+async function autoScroll(page) {
+  await page.evaluate(async () => {
+    await new Promise(resolve => {
+      let totalHeight = 0;
+      const distance = 600;
+      const timer = setInterval(() => {
+        const scrollHeight = document.body.scrollHeight;
+        window.scrollBy(0, distance);
+        totalHeight += distance;
+
+        if (totalHeight >= scrollHeight) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 300);
+    });
+  });
+}
+
+/* ---------- MAIN SCRAPER ---------- */
 (async () => {
   const browser = await chromium.launch({
     headless: true,
@@ -25,17 +46,18 @@ const fs = require('fs');
 
     let loaded = false;
 
+    /* ---------- RETRY PAGE LOAD ---------- */
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         console.log(`   Attempt ${attempt}`);
         await page.goto(url, {
-          timeout: 90000,
-          waitUntil: 'domcontentloaded'
+          waitUntil: 'domcontentloaded',
+          timeout: 90000
         });
         loaded = true;
         break;
       } catch (err) {
-        console.log(`   Timeout on attempt ${attempt}`);
+        console.log(`   ⏱️ Timeout on attempt ${attempt}`);
         await page.waitForTimeout(5000);
       }
     }
@@ -45,11 +67,24 @@ const fs = require('fs');
       continue;
     }
 
-    await page.waitForTimeout(4000);
+    /* ---------- WAIT FOR AGENCY CARDS ---------- */
+    try {
+      await page.waitForSelector('[data-testid="agency-card"]', {
+        timeout: 30000
+      });
+    } catch {
+      console.log(`   ⚠️ No agency cards found, skipping`);
+      continue;
+    }
+
+    /* ---------- TRIGGER LAZY LOAD ---------- */
+    await autoScroll(page);
+    await page.waitForTimeout(2000);
 
     const cards = await page.$$('[data-testid="agency-card"]');
     console.log(`   Found ${cards.length} agencies`);
 
+    /* ---------- EXTRACT DATA ---------- */
     for (const card of cards) {
       try {
         const name = await card.$eval('h2', el => el.innerText.trim());
@@ -58,19 +93,25 @@ const fs = require('fs');
           .$eval('span', el => el.innerText.trim())
           .catch(() => '');
 
-        results.push({
-          company_name: name,
-          agency_url: link,
-          listings: listings
-        });
-      } catch {}
+        if (name && link) {
+          results.push({
+            company_name: name,
+            agency_url: link,
+            listings: listings
+          });
+        }
+      } catch {
+        // skip broken card
+      }
     }
   }
 
+  /* ---------- DEDUPLICATE ---------- */
   const unique = Array.from(
     new Map(results.map(r => [r.agency_url, r])).values()
   );
 
+  /* ---------- SAVE CSV ---------- */
   const csv =
     'company_name,agency_url,listings\n' +
     unique
@@ -81,7 +122,7 @@ const fs = require('fs');
       .join('\n');
 
   fs.writeFileSync('bayut_agencies.csv', csv);
-  console.log(`✅ Saved ${unique.length} agencies`);
+  console.log(`✅ Saved ${unique.length} unique agencies`);
 
   await browser.close();
 })();
