@@ -1,7 +1,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 
-/* ---------- AUTO SCROLL (FOR LAZY LOAD) ---------- */
+/* ---------- AUTO SCROLL (TRIGGER LAZY LOAD) ---------- */
 async function autoScroll(page) {
   await page.evaluate(async () => {
     await new Promise(resolve => {
@@ -21,7 +21,6 @@ async function autoScroll(page) {
   });
 }
 
-/* ---------- MAIN SCRAPER ---------- */
 (async () => {
   const browser = await chromium.launch({
     headless: true,
@@ -39,14 +38,14 @@ async function autoScroll(page) {
   for (let i = 1; i <= MAX_PAGES; i++) {
     const url =
       i === 1
-        ? 'https://www.bayut.com/companies/'
-        : `https://www.bayut.com/companies/page-${i}/`;
+        ? 'https://www.bayut.com/companies/search/'
+        : `https://www.bayut.com/companies/search/page-${i}/`;
 
     console.log(`➡️ Visiting ${url}`);
 
     let loaded = false;
 
-    /* ---------- RETRY PAGE LOAD ---------- */
+    // retry page load
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         console.log(`   Attempt ${attempt}`);
@@ -56,8 +55,8 @@ async function autoScroll(page) {
         });
         loaded = true;
         break;
-      } catch (err) {
-        console.log(`   ⏱️ Timeout on attempt ${attempt}`);
+      } catch {
+        console.log(`   ⏱️ Timeout, retrying...`);
         await page.waitForTimeout(5000);
       }
     }
@@ -67,9 +66,9 @@ async function autoScroll(page) {
       continue;
     }
 
-    /* ---------- WAIT FOR AGENCY CARDS ---------- */
+    // wait for agency cards
     try {
-      await page.waitForSelector('[data-testid="agency-card"]', {
+      await page.waitForSelector('article[role="article"]', {
         timeout: 30000
       });
     } catch {
@@ -77,27 +76,27 @@ async function autoScroll(page) {
       continue;
     }
 
-    /* ---------- TRIGGER LAZY LOAD ---------- */
+    // trigger lazy-load
     await autoScroll(page);
     await page.waitForTimeout(2000);
 
-    const cards = await page.$$('[data-testid="agency-card"]');
+    const cards = await page.$$('article[role="article"]');
     console.log(`   Found ${cards.length} agencies`);
 
-    /* ---------- EXTRACT DATA ---------- */
     for (const card of cards) {
       try {
-        const name = await card.$eval('h2', el => el.innerText.trim());
-        const link = await card.$eval('a', el => el.href);
-        const listings = await card
-          .$eval('span', el => el.innerText.trim())
+        const name = await card
+          .$eval('a', el => el.innerText.trim())
+          .catch(() => '');
+
+        const link = await card
+          .$eval('a', el => el.href)
           .catch(() => '');
 
         if (name && link) {
           results.push({
             company_name: name,
-            agency_url: link,
-            listings: listings
+            agency_url: link
           });
         }
       } catch {
@@ -106,18 +105,18 @@ async function autoScroll(page) {
     }
   }
 
-  /* ---------- DEDUPLICATE ---------- */
+  // deduplicate
   const unique = Array.from(
     new Map(results.map(r => [r.agency_url, r])).values()
   );
 
-  /* ---------- SAVE CSV ---------- */
+  // save CSV
   const csv =
-    'company_name,agency_url,listings\n' +
+    'company_name,agency_url\n' +
     unique
       .map(
         r =>
-          `"${r.company_name.replace(/"/g, '""')}","${r.agency_url}","${r.listings}"`
+          `"${r.company_name.replace(/"/g, '""')}","${r.agency_url}"`
       )
       .join('\n');
 
