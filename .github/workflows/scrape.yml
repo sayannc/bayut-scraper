@@ -26,7 +26,7 @@ jobs:
         run: node scraper.js
 
       - name: Upload CSV
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bayut-agencies
           path: bayut_agencies.csv
